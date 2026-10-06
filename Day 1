@@ -1,0 +1,641 @@
+Day 1 — Salesforce Job-Switch Training 🚀
+
+Rachel, aaj foundation strong karte hain, but fresher-level theory nahi. Since you already have ~2 YOE, today's theme is “How Salesforce actually executes your code”. Ye Apex/Trigger interviews ka base hai.
+
+Total: ~2 hours
+Salesforce 55 min → Core Java 25 min → Practical 25 min → Git 10 min → Quiz 5 min
+
+1. Salesforce — Apex Triggers, Order of Execution & Bulkification | 55 min
+
+Suppose Opportunity update hui and uske basis par related Account bhi update karna hai.
+
+Basic trigger:
+
+trigger OpportunityTrigger on Opportunity (after update) {
+
+    for(Opportunity opp : Trigger.new) {
+
+        if(opp.StageName == 'Closed Won') {
+
+            Account acc = new Account(
+                Id = opp.AccountId,
+                Customer_Status__c = 'Active'
+            );
+
+            update acc;
+        }
+    }
+}
+
+Functionally ye chal sakta hai, but interview me is code ko red flag samjho.
+
+Problem:
+
+update acc;
+
+loop ke andar hai.
+
+Salesforce transactions par Governor Limits lagata hai. Agar 200 Opportunities ek saath process hui, code potentially 200 DML operations attempt karega.
+
+Instead:
+
+trigger OpportunityTrigger on Opportunity (after update) {
+
+    List<Account> accountsToUpdate = new List<Account>();
+
+    for(Opportunity opp : Trigger.new) {
+
+        if(opp.StageName == 'Closed Won' && opp.AccountId != null) {
+
+            accountsToUpdate.add(
+                new Account(
+                    Id = opp.AccountId,
+                    Customer_Status__c = 'Active'
+                )
+            );
+        }
+    }
+
+    if(!accountsToUpdate.isEmpty()) {
+        update accountsToUpdate;
+    }
+}
+
+Now regardless of whether 1 or 200 Opportunities arrive, we perform one bulk DML statement.
+
+But ek aur bug hai.
+
+Imagine Opportunity already Closed Won thi and kisi ne sirf Description update ki.
+
+Current condition:
+
+opp.StageName == 'Closed Won'
+
+still true.
+
+Account unnecessary update hoga.
+
+Use Trigger.oldMap:
+
+if(
+    opp.StageName == 'Closed Won' &&
+    Trigger.oldMap.get(opp.Id).StageName != 'Closed Won'
+) {
+    // Stage actually changed to Closed Won
+}
+
+Ye interview me important distinction hai:
+
+Current state check vs state transition check.
+
+
+---
+
+Trigger contexts
+
+Remember this mental model:
+
+Context	Typical use
+
+before insert	Set/default values before save
+before update	Modify same record before update
+before delete	Validate/prevent deletion
+after insert	Work requiring record Id
+after update	Related-record processing
+after delete	Related cleanup
+after undelete	Restore related logic
+
+
+Key rule:
+
+In a before trigger, same record modify karne ke liye DML nahi chahiye.
+
+trigger AccountTrigger on Account (before insert) {
+
+    for(Account acc : Trigger.new) {
+        acc.Description = 'New Customer';
+    }
+}
+
+Don't do:
+
+update Trigger.new;
+
+That is unnecessary and problematic.
+
+
+---
+
+Trigger.new vs Trigger.old
+
+For update:
+
+Trigger.new
+↓
+new/current values
+
+Trigger.old
+↓
+values before update
+
+Maps:
+
+Trigger.newMap.get(recordId);
+Trigger.oldMap.get(recordId);
+
+Example:
+
+Account oldAcc = Trigger.oldMap.get(acc.Id);
+
+if(acc.Rating != oldAcc.Rating) {
+    // Rating changed
+}
+
+
+---
+
+SOQL bulkification
+
+Another classic bad pattern:
+
+for(Contact con : Trigger.new) {
+
+    Account acc = [
+        SELECT Id, Name
+        FROM Account
+        WHERE Id = :con.AccountId
+    ];
+}
+
+Instead collect IDs:
+
+Set<Id> accountIds = new Set<Id>();
+
+for(Contact con : Trigger.new) {
+    if(con.AccountId != null) {
+        accountIds.add(con.AccountId);
+    }
+}
+
+Query once:
+
+Map<Id, Account> accountMap =
+    new Map<Id, Account>([
+        SELECT Id, Name
+        FROM Account
+        WHERE Id IN :accountIds
+    ]);
+
+Then:
+
+for(Contact con : Trigger.new) {
+
+    Account acc = accountMap.get(con.AccountId);
+
+    if(acc != null) {
+        // logic
+    }
+}
+
+This pattern is worth memorising:
+
+Collect → Query → Process → DML
+
+You'll use it constantly in Apex.
+
+
+---
+
+Trigger Handler pattern
+
+MNC interviews may ask:
+
+“Do you write all business logic inside triggers?”
+
+Good answer:
+
+> No. I prefer keeping the trigger lightweight and moving business logic into handler/service classes. It improves maintainability, testing and reuse.
+
+
+
+Example:
+
+trigger OpportunityTrigger on Opportunity (
+    before insert,
+    before update,
+    after insert,
+    after update
+) {
+
+    OpportunityTriggerHandler handler =
+        new OpportunityTriggerHandler();
+
+    if(Trigger.isAfter && Trigger.isUpdate) {
+        handler.afterUpdate(Trigger.new, Trigger.oldMap);
+    }
+}
+
+Handler:
+
+public class OpportunityTriggerHandler {
+
+    public void afterUpdate(
+        List<Opportunity> newRecords,
+        Map<Id, Opportunity> oldMap
+    ) {
+
+        Set<Id> accountIds = new Set<Id>();
+
+        for(Opportunity opp : newRecords) {
+
+            Opportunity oldOpp = oldMap.get(opp.Id);
+
+            if(
+                opp.StageName == 'Closed Won' &&
+                oldOpp.StageName != 'Closed Won' &&
+                opp.AccountId != null
+            ) {
+                accountIds.add(opp.AccountId);
+            }
+        }
+
+        List<Account> accountsToUpdate = new List<Account>();
+
+        for(Id accountId : accountIds) {
+
+            accountsToUpdate.add(
+                new Account(
+                    Id = accountId,
+                    Customer_Status__c = 'Active'
+                )
+            );
+        }
+
+        if(!accountsToUpdate.isEmpty()) {
+            update accountsToUpdate;
+        }
+    }
+}
+
+Notice Set<Id>.
+
+Why not List<Id>?
+
+Because multiple Opportunities may belong to the same Account.
+
+Set automatically removes duplicates.
+
+That's exactly the sort of tiny design choice interviewers notice.
+
+Salesforce interview drill
+
+Try answering these without looking back:
+
+1. Why shouldn't SOQL be inside a loop?
+
+
+2. Why shouldn't DML be inside a loop?
+
+
+3. Difference between Trigger.new and Trigger.old?
+
+
+4. When would you use before update instead of after update?
+
+
+5. Why use Set<Id> while collecting related IDs?
+
+
+6. What is bulkification?
+
+
+7. Why use a Trigger Handler?
+
+
+8. What happens if 200 records enter your trigger?
+
+
+9. How would you detect that Stage changed specifically from X → Y?
+
+
+10. Can we modify Trigger.new directly in an after trigger?
+
+
+
+Interview-level answer to #6:
+
+> Bulkification means designing Apex so that it can process multiple records in a single transaction efficiently while staying within Salesforce governor limits. I avoid SOQL and DML inside loops, collect record IDs using Sets, query related data once, use Maps for efficient lookup and perform DML on collections.
+
+
+
+That's the level of answer I want you giving recruiters.
+
+
+---
+
+2. Core Java — OOP concepts | 25 min
+
+Salesforce interviews sometimes test Java because Apex syntax/concepts are closely related.
+
+Today: Encapsulation, Inheritance, Polymorphism, Abstraction.
+
+Consider:
+
+class Employee {
+
+    private String name;
+    private double salary;
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getName() {
+        return name;
+    }
+}
+
+name is private.
+
+External code cannot directly do:
+
+employee.name = "Rachel";
+
+It goes through methods.
+
+That's encapsulation.
+
+Inheritance
+
+class Employee {
+
+    void work() {
+        System.out.println("Working");
+    }
+}
+
+class Developer extends Employee {
+
+    void code() {
+        System.out.println("Writing code");
+    }
+}
+
+Developer inherits Employee behaviour.
+
+Polymorphism
+
+class Employee {
+
+    void work() {
+        System.out.println("Employee working");
+    }
+}
+
+class Developer extends Employee {
+
+    @Override
+    void work() {
+        System.out.println("Developer coding");
+    }
+}
+
+Then:
+
+Employee emp = new Developer();
+emp.work();
+
+Output:
+
+Developer coding
+
+Runtime chooses overridden implementation.
+
+That's runtime polymorphism / method overriding.
+
+Abstraction
+
+abstract class Payment {
+
+    abstract void processPayment();
+
+}
+
+Subclass:
+
+class CreditCardPayment extends Payment {
+
+    @Override
+    void processPayment() {
+        System.out.println("Processing credit card");
+    }
+}
+
+Abstraction defines what must happen, while implementation decides how.
+
+Interview trap
+
+Overloading vs overriding
+
+Overloading:
+
+calculate(int a, int b)
+calculate(double a, double b)
+
+Same method name, different parameters.
+
+Overriding:
+
+Parent:
+
+void work()
+
+Child provides its own:
+
+@Override
+void work()
+
+Remember:
+
+Overloading → compile-time polymorphism
+
+Overriding → runtime polymorphism
+
+
+---
+
+3. Today's Mini Project — Account Risk Automation | 25 min
+
+Now you code.
+
+Requirement:
+
+> Whenever an Opportunity changes to Closed Won, update its related Account's Customer_Status__c to Active.
+
+
+
+But your solution must support 200 Opportunities simultaneously.
+
+Requirements:
+
+No SOQL inside loop
+No DML inside loop
+Use Trigger.oldMap
+Use Set
+Use Trigger Handler
+Perform only necessary updates
+
+Structure:
+
+OpportunityTrigger
+        ↓
+OpportunityTriggerHandler
+        ↓
+detect Stage change
+        ↓
+collect Account IDs
+        ↓
+update Accounts
+
+Expected files
+
+force-app/
+└── main/
+    └── default/
+        ├── triggers/
+        │   └── OpportunityTrigger.trigger
+        └── classes/
+            ├── OpportunityTriggerHandler.cls
+            └── OpportunityTriggerHandlerTest.cls
+
+Bonus challenge:
+
+Write a test that creates:
+
+1 Account
+↓
+5 Opportunities
+↓
+update all 5 → Closed Won
+↓
+Account should become Active
+
+Use:
+
+Test.startTest();
+
+update opportunities;
+
+Test.stopTest();
+
+Then:
+
+System.assertEquals(
+    'Active',
+    updatedAccount.Customer_Status__c
+);
+
+Don't worry about making it perfect on the first attempt. The important part is that you write it yourself.
+
+
+---
+
+4. Git/GitHub — Feature Branch Workflow | 10 min
+
+For your switch, I want you comfortable explaining Git instead of only saying “I've used Git.”
+
+Imagine ticket:
+
+SF-1023
+Opportunity Account Status Automation
+
+Create branch:
+
+git checkout main
+git pull
+git checkout -b feature/SF-1023-opportunity-status
+
+After coding:
+
+git status
+
+Stage:
+
+git add .
+
+Commit:
+
+git commit -m "SF-1023 Add Opportunity account status automation"
+
+Push:
+
+git push -u origin feature/SF-1023-opportunity-status
+
+Then create PR:
+
+feature/SF-1023-opportunity-status
+            ↓
+           main
+
+A CI/CD pipeline—Harness, GitHub Actions, Jenkins, etc.—can then run validation/tests before deployment.
+
+Your experience with Git branching, PRs, CI/CD and Salesforce deployments is already on your resume, so later sessions will turn this into proper interview-level DevOps knowledge rather than just command memorisation.
+
+
+---
+
+5. Day-1 Quiz | 5 min
+
+Write your answers somewhere without looking above:
+
+1. Why is this dangerous?
+
+
+
+for(Account a : Trigger.new) {
+    update a;
+}
+
+2. What collection would you use to store unique Account IDs?
+
+
+3. Difference between:
+
+
+
+Trigger.newMap
+
+and
+
+Trigger.oldMap
+
+4. What's wrong here?
+
+
+
+for(Contact c : Trigger.new) {
+
+    List<Account> accounts =
+        [SELECT Id FROM Account
+         WHERE Id = :c.AccountId];
+
+}
+
+5. In Java, what is the difference between method overloading and overriding?
+
+
+6. What does this command do?
+
+
+
+git checkout -b feature/SF-1023
+
+7. Explain bulkification in 30 seconds as if I'm your interviewer.
+
+
+
+Today's finish line
+
+By the end of Day 1, you should be able to explain Trigger context + bulkification + oldMap/newMap + Handler pattern, distinguish the four basic Java OOP concepts, and create/push a Git feature branch.
+
+Tomorrow's natural progression is SOQL + Collections (List/Set/Map) + Java Collections + Apex testing, because those concepts connect directly to today's trigger work.
