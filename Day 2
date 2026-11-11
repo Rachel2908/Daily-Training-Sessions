@@ -1,119 +1,695 @@
-Day 2 — Salesforce Job-Switch Training 🚀
+Day 2 — Salesforce Job-Switch Training
 
-Date: 4 October 2026
+Aaj Day 1 ke Triggers + bulkification ke upar next layer build karenge: SOQL + Apex Collections + Test Classes, then Java Collections, and finally Git merge/conflict + CI/CD/Harness thinking. Ye combination interviews me bahut frequently ek saath aa jata hai.
 
-Rachel, aaj ka session progressive roadmap ka next step hai. Focus sirf theory nahi — interview explanation + practical implementation + debugging mindset.
+~2 hours: Salesforce 55 min → Java 25 min → practical 25 min → Git/Harness 10 min → quiz 5 min.
 
-Total: ~2 hours  
-Salesforce 55 min → Core Java 25 min → Practical 25 min → Git/Harness 10 min → Quiz 5 min
+1. Salesforce — SOQL, Collections & Test Classes | ~55 min
 
-1. Salesforce — SOQL, Collections & Apex Testing | ~55 min
+Day 1 ka golden pattern yaad rakho:
 
-Aaj ke core points:
-- SOQL basics and relationship thinking
-- List/Set/Map selection
-- Test.startTest()/stopTest() and assertions
+Collect IDs → Query once → Map data → Process → DML once
 
-Interview mindset:
-- Requirement ko pehle business rule me convert karo.
-- Salesforce governor limits, sharing/security, bulk behavior aur transaction context ko consciously check karo.
-- Agar DEV/COMQA me kaam kare but SIT/UAT me issue aaye, code ke saath metadata/configuration/data differences bhi compare karo.
-- Admin user ke successful result ko end-user behavior ka proof mat mano.
+Suppose requirement hai:
 
-Concrete practice sample:
+> Jab Contacts update hon, unke related Accounts fetch karo aur sirf Active Accounts par processing karo.
 
-```apex
-List<AggregateResult> rows = [
-    SELECT AccountId accountId, COUNT(Id) total
-    FROM Contact
-    WHERE AccountId != null
-    GROUP BY AccountId
-    HAVING COUNT(Id) > 2
-];
-```
 
-Interview questions:
-1. Is topic ka main use case kya hai?
-2. Is implementation me sabse common production bug kya ho sakta hai?
-3. Bulk transaction me behavior kaise change hoga?
-4. Standard user vs System Admin ke result me difference kyun aa sakta hai?
-5. DEV works but SIT fails — first five checks kya honge?
-6. Is design ko testable aur observable kaise banaoge?
 
-2. Core Java — Java Collections | ~25 min
+Bad Apex:
 
-Goal:
-- Syntax yaad karna enough nahi; concept explain karna aana chahiye.
-- One happy path + one edge/failure path likho.
-- Collection/concurrency/performance implication ho to explain karo.
+for (Contact con : Trigger.new) {
+    Account acc = [
+        SELECT Id, Name, Status__c
+        FROM Account
+        WHERE Id = :con.AccountId
+    ];
+}
+
+200 Contacts aaye → potentially 200 queries. Governor limit hit.
+
+Better approach:
+
+Set<Id> accountIds = new Set<Id>();
+
+for (Contact con : Trigger.new) {
+    if (con.AccountId != null) {
+        accountIds.add(con.AccountId);
+    }
+}
+
+Map<Id, Account> accountMap = new Map<Id, Account>([
+    SELECT Id, Name, Status__c
+    FROM Account
+    WHERE Id IN :accountIds
+]);
+
+for (Contact con : Trigger.new) {
+    Account acc = accountMap.get(con.AccountId);
+
+    if (acc != null && acc.Status__c == 'Active') {
+        // business logic
+    }
+}
+
+Three collections samjho:
+
+Collection	Best use
+
+List<T>	Ordered records, duplicates allowed
+Set<T>	Unique values/IDs
+Map<K,V>	Key-based fast lookup
+
 
 Example:
 
-```java
-// Write one normal case and one edge/failure case.
-// Be ready to explain why the implementation is correct.
-```
+List<String> names = new List<String>{
+    'Rachel', 'Rachel', 'Alex'
+};
 
-Java interview drill:
-1. Is concept ka practical use?
-2. Null/exception behavior?
-3. Time/space or concurrency implication?
-4. Iska Apex/Salesforce world me koi similar mental model?
+3 values.
 
-3. Hands-on Project — Bulk Opportunity Processor | ~25 min
+Set<String> names = new Set<String>{
+    'Rachel', 'Rachel', 'Alex'
+};
 
-Acceptance criteria:
-[ ] Smallest working version
-[ ] Input validation
-[ ] Positive scenario
-[ ] Negative/empty scenario
-[ ] Bulk/security behavior considered
-[ ] Useful error/debug output
-[ ] Unit test or clear verification step
+Effectively:
 
-Expected output:
-A working, interview-explainable implementation of **Bulk Opportunity Processor** that follows today's Salesforce concepts.
+Rachel
+Alex
 
-4. Git + Harness/CI-CD — Git commits and test-focused changes | ~10 min
+Now:
 
-Practice flow:
+Map<Id, Account> accountMap =
+    new Map<Id, Account>(accounts);
 
-feature branch  
-→ implementation  
-→ local/unit tests  
-→ commit  
-→ pull request  
-→ validation  
-→ review/approval  
-→ deploy  
-→ post-deploy verification
+Then instead of repeatedly searching a List:
 
-Suggested commands:
+Account acc = accountMap.get(accountId);
 
-```bash
-git switch -c training/day-2
+This is why Maps are extremely common in trigger handlers.
+
+
+---
+
+Relationship SOQL
+
+Instead of separate queries unnecessarily, Salesforce relationships can help.
+
+Child → Parent:
+
+SELECT Id,
+       FirstName,
+       LastName,
+       Account.Name,
+       Account.Industry
+FROM Contact
+
+You can access:
+
+con.Account.Name
+
+Parent → Children:
+
+SELECT Id,
+       Name,
+       (SELECT Id, FirstName, LastName
+        FROM Contacts)
+FROM Account
+
+Then:
+
+for (Account acc : accounts) {
+
+    for (Contact con : acc.Contacts) {
+        System.debug(con.LastName);
+    }
+}
+
+Interview question:
+
+SOQL vs SOSL?
+
+A good short answer:
+
+> SOQL is used when I know which object/data structure I need and want to query records using specific fields and conditions. SOSL is useful for text-based searches across multiple objects and fields.
+
+
+
+Example SOQL:
+
+SELECT Id, Name
+FROM Account
+WHERE Industry = 'Banking'
+
+SOSL:
+
+FIND 'Rachel*'
+IN ALL FIELDS
+RETURNING
+    Contact(Id, Name),
+    Lead(Id, Name)
+
+
+---
+
+Governor Limits you should know
+
+Don't try memorising every Salesforce limit.
+
+For interviews, at minimum know the important transaction limits conceptually and the commonly tested synchronous limits:
+
+SOQL queries: 100
+
+DML statements: 150
+
+And understand why governor limits exist:
+
+Salesforce is a multi-tenant platform, so limits prevent one transaction/customer's code from monopolising shared platform resources.
+
+Much better interview answer than simply saying:
+
+> “Salesforce only allows 100 SOQL.”
+
+
+
+
+---
+
+Apex Test Classes
+
+Now important part.
+
+Suppose:
+
+public class AccountService {
+
+    public static void activateAccount(Id accountId) {
+
+        Account acc = [
+            SELECT Id, Status__c
+            FROM Account
+            WHERE Id = :accountId
+        ];
+
+        acc.Status__c = 'Active';
+
+        update acc;
+    }
+}
+
+Test:
+
+@IsTest
+private class AccountServiceTest {
+
+    @IsTest
+    static void shouldActivateAccount() {
+
+        Account acc = new Account(
+            Name = 'Test Account'
+        );
+
+        insert acc;
+
+        Test.startTest();
+
+        AccountService.activateAccount(acc.Id);
+
+        Test.stopTest();
+
+        Account result = [
+            SELECT Status__c
+            FROM Account
+            WHERE Id = :acc.Id
+        ];
+
+        System.assertEquals(
+            'Active',
+            result.Status__c
+        );
+    }
+}
+
+The point of a test is not merely coverage.
+
+A strong interview answer:
+
+> I write Apex tests to validate business behaviour, positive and negative scenarios, bulk processing and expected outcomes. Code coverage is required for deployment, but coverage alone doesn't prove that the implementation works correctly.
+
+
+
+That's a very important distinction.
+
+Test.startTest() / Test.stopTest()
+
+These give the code-under-test a fresh governor-limit context and Test.stopTest() causes queued asynchronous work created during the test context—such as future/queueable work—to execute before assertions where applicable.
+
+So:
+
+// test data setup
+
+Test.startTest();
+
+// actual operation being tested
+
+Test.stopTest();
+
+// assertions
+
+Good mental structure:
+
+Arrange → Act → Assert
+
+Arrange
+Create test data
+
+Act
+Execute functionality
+
+Assert
+Verify result
+
+
+---
+
+@TestSetup
+
+If multiple tests require common data:
+
+@IsTest
+private class OpportunityServiceTest {
+
+    @TestSetup
+    static void createData() {
+
+        Account acc = new Account(
+            Name = 'Test Account'
+        );
+
+        insert acc;
+    }
+
+    @IsTest
+    static void testScenarioOne() {
+        // ...
+    }
+
+    @IsTest
+    static void testScenarioTwo() {
+        // ...
+    }
+}
+
+This reduces repeated setup.
+
+One more interview point:
+
+Avoid relying on real org data.
+
+Normally:
+
+@IsTest
+
+runs with data isolation (SeeAllData=false behaviour).
+
+Your tests should create their own required data.
+
+That makes tests portable across Dev → QA → SIT → Production.
+
+Given you've dealt with behaviour differing between environments, this is especially worth understanding: environment-independent tests are a design goal, not just a deployment checkbox.
+
+Salesforce interview drill
+
+Be ready to answer these aloud:
+
+1. List vs Set vs Map?
+
+
+2. Why use Map<Id, Account>?
+
+
+3. SOQL vs SOSL?
+
+
+4. What are governor limits and why does Salesforce have them?
+
+
+5. Why shouldn't SOQL/DML be inside loops?
+
+
+6. Why do we use Test.startTest() and Test.stopTest()?
+
+
+7. Is 75% coverage enough to say your code is properly tested?
+
+
+8. What is @TestSetup?
+
+
+9. How would you test a trigger processing 200 records?
+
+
+10. How do you make tests independent of org/environment data?
+
+
+
+
+---
+
+2. Core Java — Collections | ~25 min
+
+This connects nicely with Apex.
+
+ArrayList
+
+List<String> developers = new ArrayList<>();
+
+developers.add("Rachel");
+developers.add("Alex");
+developers.add("Rachel");
+
+Duplicates allowed.
+
+Conceptually:
+
+Rachel
+Alex
+Rachel
+
+HashSet
+
+Set<String> developers = new HashSet<>();
+
+developers.add("Rachel");
+developers.add("Alex");
+developers.add("Rachel");
+
+Duplicates aren't retained.
+
+Conceptually:
+
+Rachel
+Alex
+
+Don't depend on HashSet iteration order.
+
+HashMap
+
+Map<Integer, String> employees = new HashMap<>();
+
+employees.put(101, "Rachel");
+employees.put(102, "Alex");
+
+System.out.println(
+    employees.get(101)
+);
+
+Output:
+
+Rachel
+
+Compare:
+
+Java                   Apex
+
+ArrayList              List
+HashSet                Set
+HashMap                 Map
+
+The APIs aren't identical, but the mental model transfers very well.
+
+Common interview question
+
+ArrayList vs LinkedList?
+
+ArrayList uses a dynamic-array structure and is generally strong for indexed access.
+
+LinkedList is node-based and can make insert/remove operations at known positions/ends convenient, but random indexed access requires traversal.
+
+Don't answer:
+
+> LinkedList is always faster for insertion.
+
+
+
+That's oversimplified. Real performance depends on where you're inserting and whether you already have the node/iterator position.
+
+HashMap question
+
+What happens here?
+
+Map<String, Integer> map = new HashMap<>();
+
+map.put("A", 10);
+map.put("A", 20);
+
+Final value:
+
+A → 20
+
+Because keys are unique and the second put replaces the value for "A".
+
+Java challenge
+
+Given:
+
+List<String> technologies =
+    Arrays.asList(
+        "Apex",
+        "Java",
+        "LWC",
+        "Java",
+        "Apex"
+    );
+
+Create a collection containing only unique technologies.
+
+Expected logical result:
+
+Apex
+Java
+LWC
+
+Hint:
+
+new HashSet<>(technologies)
+
+
+---
+
+3. Mini Project — Bulk Opportunity Processor | ~25 min
+
+Today extend yesterday's project.
+
+Requirement
+
+When Opportunities transition to Closed Won:
+
+Update related Account Customer_Status__c = 'Active'
+
+Must support 200 Opportunities
+
+Multiple Opportunities may share one Account
+
+Do not update the same Account repeatedly
+
+Include proper tests
+
+
+Build:
+
+OpportunityTrigger
+        ↓
+OpportunityTriggerHandler
+        ↓
+OpportunityService
+        ↓
+Account update
+
+Trigger
+
+Your trigger should be tiny:
+
+trigger OpportunityTrigger
+on Opportunity (after update) {
+
+    OpportunityTriggerHandler.afterUpdate(
+        Trigger.new,
+        Trigger.oldMap
+    );
+}
+
+Handler responsibility
+
+Detect:
+
+old Stage != Closed Won
+AND
+new Stage == Closed Won
+
+Collect:
+
+Set<Id> accountIds
+
+Then call:
+
+OpportunityService.activateAccounts(accountIds);
+
+Service responsibility
+
+Create/update Accounts in bulk.
+
+No DML inside loops.
+
+Test requirements
+
+Create:
+
+2 Accounts
+↓
+200 Opportunities
+↓
+100 belong to Account A
+100 belong to Account B
+↓
+update all to Closed Won
+
+Then assert:
+
+Account A → Active
+Account B → Active
+
+Also add a negative scenario:
+
+Opportunity:
+Prospecting → Negotiation
+
+Expected:
+
+Account status must NOT change
+
+This is already much closer to the type of code discussion you may get in a Salesforce Developer interview.
+
+
+---
+
+4. Git/GitHub + Harness/CI/CD | ~10 min
+
+Scenario:
+
+You created:
+
+feature/SF-1023
+
+Another developer changed the same class on main.
+
+Before PR you do:
+
+git checkout main
+git pull origin main
+
+git checkout feature/SF-1023
+git merge main
+
+Conflict:
+
+<<<<<<< HEAD
+your change
+=======
+main branch change
+>>>>>>> main
+
+You manually decide the correct final code, remove conflict markers, then:
+
 git add .
-git commit -m "Complete Day 2 training"
-git push -u origin training/day-2
-```
+git commit
 
-Deployment/debugging note:
-A successful deployment does not prove the feature works for every user. Validate metadata dependencies, permissions, configuration, and the actual end-user path after deployment.
+Don't say in an interview:
 
-5. Day 2 Quiz | ~5 min
+> “Git automatically chooses whichever code is latest.”
 
-Q1. Today's Salesforce topic ko 60 seconds me explain karo.  
-Q2. One bulkification/security risk identify karo.  
-Q3. One negative test scenario batao.  
-Q4. DEV vs SIT mismatch ho to pehla evidence kya collect karoge?  
-Q5. Today's Java concept ka one real coding use case?  
-Q6. Hands-on project me observable success ka proof kya hoga?  
-Q7. CI/CD pipeline kis failure par promotion stop karegi?  
-Q8. Is topic se related one interviewer follow-up question khud banao.
 
-Today's completion target
 
-By the end of Day 2, you should be able to explain **SOQL, Collections & Apex Testing**, demonstrate **Java Collections**, complete **Bulk Opportunity Processor**, and describe the deployment/debugging workflow confidently.
+A merge conflict requires understanding both intended changes.
 
-Revision note:
-Session complete karne ke baad 5-line summary apne words me likho + one interview question mark karo jiska answer abhi weak lag raha hai.
+CI/CD mental model
+
+For Salesforce:
+
+Developer
+   ↓
+Git feature branch
+   ↓
+Pull Request
+   ↓
+Validation pipeline
+   ↓
+Apex tests / quality checks
+   ↓
+Approval
+   ↓
+Merge
+   ↓
+Deployment pipeline
+   ↓
+Target Salesforce environment
+
+A platform such as Harness can orchestrate deployment pipelines, approvals and related software-delivery controls.
+
+Since Harness is on your actual experience path, eventually you should be able to explain what happened from Git commit → validation → deployment, rather than only saying “I worked on Harness.”
+
+
+---
+
+Day 2 Quiz | ~5 min
+
+Don't look above while answering.
+
+Q1. Which Apex collection is best for collecting unique Account IDs?
+
+Q2. Why is this useful?
+
+Map<Id, Account> accountMap
+
+Q3. What's wrong with:
+
+for (Opportunity opp : Trigger.new) {
+
+    Account acc = [
+        SELECT Id
+        FROM Account
+        WHERE Id = :opp.AccountId
+    ];
+}
+
+Q4. When would you prefer SOSL over SOQL?
+
+Q5. Why isn't 90% code coverage automatically proof of good testing?
+
+Q6. Java:
+
+map.put("Rachel", 10);
+map.put("Rachel", 20);
+
+What value does map.get("Rachel") return?
+
+Q7. ArrayList vs HashSet: biggest conceptual difference?
+
+Q8. Why test the 200-record Opportunity scenario rather than only one Opportunity?
+
+Q9. What is a Git merge conflict?
+
+Q10. Interview challenge: Answer in 30–45 seconds:
+
+> “How do you make an Apex trigger bulk-safe?”
+
+
+
+Day 2 finish line
+
+Aaj ke baad tumhe comfortably explain karna chahiye:
+
+List/Set/Map → bulk SOQL → SOQL vs SOSL → Apex testing → Java Collections → Git merge/conflicts → basic CI/CD flow.
+
+And don't just read the mini-project—actually write the Trigger + Handler + Service + Test class. That's the part that converts interview knowledge into developer confidence.
