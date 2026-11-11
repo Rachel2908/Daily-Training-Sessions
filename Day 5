@@ -1,0 +1,124 @@
+Day 5 — Salesforce Job-Switch Training 🚀
+
+Date: 7 October 2026
+
+Rachel, aaj ka session progressive roadmap ka next step hai. Focus sirf theory nahi — interview explanation + practical implementation + debugging mindset.
+
+Total: ~2 hours  
+Salesforce 55 min → Core Java 25 min → Practical 25 min → Git/Harness 10 min → Quiz 5 min
+
+1. Salesforce — Salesforce Security + Secure Apex | ~55 min
+
+Aaj ke core points:
+- Profiles/Permission Sets/OWD/sharing
+- with sharing vs CRUD/FLS
+- WITH USER_MODE and stripInaccessible
+
+Interview mindset:
+- Requirement ko pehle business rule me convert karo.
+- Salesforce governor limits, sharing/security, bulk behavior aur transaction context ko consciously check karo.
+- Agar DEV/COMQA me kaam kare but SIT/UAT me issue aaye, code ke saath metadata/configuration/data differences bhi compare karo.
+- Admin user ke successful result ko end-user behavior ka proof mat mano.
+
+Concrete practice sample:
+
+```apex
+public with sharing class SecureCaseService {
+    @AuraEnabled(cacheable=true)
+    public static List<Case> getCases(Id accountId) {
+        return [
+            SELECT Id, Subject, Status, Priority
+            FROM Case
+            WHERE AccountId = :accountId
+            WITH USER_MODE
+            LIMIT 50
+        ];
+    }
+}
+```
+
+Interview questions:
+1. Is topic ka main use case kya hai?
+2. Is implementation me sabse common production bug kya ho sakta hai?
+3. Bulk transaction me behavior kaise change hoga?
+4. Standard user vs System Admin ke result me difference kyun aa sakta hai?
+5. DEV works but SIT fails — first five checks kya honge?
+6. Is design ko testable aur observable kaise banaoge?
+
+2. Core Java — Strings, immutability, equals() and hashCode() | ~25 min
+
+Goal:
+- Syntax yaad karna enough nahi; concept explain karna aana chahiye.
+- One happy path + one edge/failure path likho.
+- Collection/concurrency/performance implication ho to explain karo.
+
+Example:
+
+```java
+// Write one normal case and one edge/failure case.
+// Be ready to explain why the implementation is correct.
+```
+
+Java interview drill:
+1. Is concept ka practical use?
+2. Null/exception behavior?
+3. Time/space or concurrency implication?
+4. Iska Apex/Salesforce world me koi similar mental model?
+
+3. Hands-on Project — Secure Account Explorer | ~25 min
+
+Acceptance criteria:
+[ ] Smallest working version
+[ ] Input validation
+[ ] Positive scenario
+[ ] Negative/empty scenario
+[ ] Bulk/security behavior considered
+[ ] Useful error/debug output
+[ ] Unit test or clear verification step
+
+Expected output:
+A working, interview-explainable implementation of **Secure Account Explorer** that follows today's Salesforce concepts.
+
+4. Git + Harness/CI-CD — Security deployment checks | ~10 min
+
+Practice flow:
+
+feature branch  
+→ implementation  
+→ local/unit tests  
+→ commit  
+→ pull request  
+→ validation  
+→ review/approval  
+→ deploy  
+→ post-deploy verification
+
+Suggested commands:
+
+```bash
+git switch -c training/day-5
+git add .
+git commit -m "Complete Day 5 training"
+git push -u origin training/day-5
+```
+
+Deployment/debugging note:
+A successful deployment does not prove the feature works for every user. Validate metadata dependencies, permissions, configuration, and the actual end-user path after deployment.
+
+5. Day 5 Quiz | ~5 min
+
+Q1. Today's Salesforce topic ko 60 seconds me explain karo.  
+Q2. One bulkification/security risk identify karo.  
+Q3. One negative test scenario batao.  
+Q4. DEV vs SIT mismatch ho to pehla evidence kya collect karoge?  
+Q5. Today's Java concept ka one real coding use case?  
+Q6. Hands-on project me observable success ka proof kya hoga?  
+Q7. CI/CD pipeline kis failure par promotion stop karegi?  
+Q8. Is topic se related one interviewer follow-up question khud banao.
+
+Today's completion target
+
+By the end of Day 5, you should be able to explain **Salesforce Security + Secure Apex**, demonstrate **Strings, immutability, equals() and hashCode()**, complete **Secure Account Explorer**, and describe the deployment/debugging workflow confidently.
+
+Revision note:
+Session complete karne ke baad 5-line summary apne words me likho + one interview question mark karo jiska answer abhi weak lag raha hai.

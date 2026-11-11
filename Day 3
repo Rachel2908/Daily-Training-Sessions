@@ -1,863 +1,118 @@
-Day 3 — Salesforce Job-Switch Training
+Day 3 — Salesforce Job-Switch Training 🚀
 
-Rachel, Day 1 me Triggers + bulkification, Day 2 me SOQL + Collections + testing hua. Aaj uske next logical layer par jaate hain: Asynchronous Apex + Java Exception Handling + Queueable mini-project + Git rebase + Harness deployment flow.
+Date: 5 October 2026
 
-Target: ~2 hours: Salesforce 55 min → Java 25 min → hands-on 25 min → Git/Harness 10 min → quiz 5 min.
+Rachel, aaj ka session progressive roadmap ka next step hai. Focus sirf theory nahi — interview explanation + practical implementation + debugging mindset.
 
+Total: ~2 hours  
+Salesforce 55 min → Core Java 25 min → Practical 25 min → Git/Harness 10 min → Quiz 5 min
 
----
+1. Salesforce — Async Apex & REST Integration | ~55 min
 
-1. Salesforce — Asynchronous Apex | ~55 min
+Aaj ke core points:
+- Queueable fundamentals
+- HTTP callout architecture
+- HttpCalloutMock testing
 
-Interview me common scenario:
+Interview mindset:
+- Requirement ko pehle business rule me convert karo.
+- Salesforce governor limits, sharing/security, bulk behavior aur transaction context ko consciously check karo.
+- Agar DEV/COMQA me kaam kare but SIT/UAT me issue aaye, code ke saath metadata/configuration/data differences bhi compare karo.
+- Admin user ke successful result ko end-user behavior ka proof mat mano.
 
-> “User Account update karta hai, aur uske baad external system ko REST API callout karna hai. Trigger se directly callout karoge?”
+Concrete practice sample:
 
-
-
-Generally, you should separate work that doesn't need to finish inside the user's synchronous transaction.
-
-Mental model:
-
-User Transaction
-      ↓
-Trigger / Apex
-      ↓
-Queue async job
-      ↓
-Transaction finishes
-
-Later
-      ↓
-Async worker
-      ↓
-REST callout / heavy processing
-
-Salesforce gives several async mechanisms. For your experience level, four names confidently samajhne chahiye:
-
-Mechanism	Best suited for
-
-Future	Simple legacy async work
-Queueable	Structured async jobs; usually preferred over Future
-Batch Apex	Large datasets
-Scheduled Apex	Run Apex at scheduled times
-
-
-Future method
-
-public class AccountService {
-
-    @future
-    public static void processAccount(Id accountId) {
-        // async processing
-    }
-}
-
-Call:
-
-AccountService.processAccount(acc.Id);
-
-But Future has limitations.
-
-For example, you cannot simply pass an sObject:
-
-@future
-public static void process(Account acc)
-
-Instead pass primitives/collections of primitives such as IDs.
-
-This is one reason Queueable is usually more flexible.
-
-
----
-
-Queueable Apex
-
-Basic implementation:
-
-public class AccountProcessor
-    implements Queueable {
-
-    private Set<Id> accountIds;
-
-    public AccountProcessor(Set<Id> accountIds) {
-        this.accountIds = accountIds;
-    }
-
+```apex
+public class CustomerSyncJob implements Queueable, Database.AllowsCallouts {
     public void execute(QueueableContext context) {
-
-        List<Account> accounts = [
-            SELECT Id, Name
-            FROM Account
-            WHERE Id IN :accountIds
-        ];
-
-        // processing
+        // Query a bounded workload, call the external API,
+        // persist success/failure, and avoid infinite retry chains.
     }
 }
-
-Enqueue:
-
-System.enqueueJob(
-    new AccountProcessor(accountIds)
-);
-
-Important interview point:
-
-> Queueable Apex supports more complex state than Future methods and provides a job ID. Queueable jobs can also be chained when a workflow needs sequential asynchronous processing.
-
-
-
-Job ID:
-
-Id jobId = System.enqueueJob(
-    new AccountProcessor(accountIds)
-);
-
-
----
-
-Queueable + REST Callout
-
-Suppose Salesforce needs to notify another system after Opportunity becomes Closed Won.
-
-public class OpportunitySyncJob
-    implements Queueable, Database.AllowsCallouts {
-
-    private Set<Id> opportunityIds;
-
-    public OpportunitySyncJob(
-        Set<Id> opportunityIds
-    ) {
-        this.opportunityIds = opportunityIds;
-    }
-
-    public void execute(
-        QueueableContext context
-    ) {
-
-        List<Opportunity> opportunities = [
-            SELECT Id, Name, Amount, StageName
-            FROM Opportunity
-            WHERE Id IN :opportunityIds
-        ];
-
-        HttpRequest req = new HttpRequest();
-
-        req.setEndpoint(
-            'callout:External_System/opportunities'
-        );
-
-        req.setMethod('POST');
-        req.setHeader(
-            'Content-Type',
-            'application/json'
-        );
-
-        req.setBody(
-            JSON.serialize(opportunities)
-        );
-
-        Http http = new Http();
-
-        HttpResponse response =
-            http.send(req);
-
-        if (
-            response.getStatusCode() >= 200 &&
-            response.getStatusCode() < 300
-        ) {
-            System.debug('Sync successful');
-        }
-    }
-}
-
-Notice:
-
-Database.AllowsCallouts
-
-This allows the Queueable job to perform callouts.
-
-And:
-
-callout:External_System
-
-represents using a Named Credential rather than hardcoding credentials/endpoints in Apex.
-
-Interview answer:
-
-> I prefer Named Credentials because endpoint and authentication configuration can be managed outside Apex, which is more secure and maintainable than hardcoding credentials.
-
-
-
-
----
-
-Batch Apex
-
-Imagine:
-
-> Process 2 million Accounts.
-
-
-
-Trying:
-
-List<Account> accounts = [
-    SELECT Id
-    FROM Account
-];
-
-inside a normal synchronous transaction is obviously not the design.
-
-Batch Apex divides large processing into chunks.
-
-Structure:
-
-public class AccountBatch
-    implements Database.Batchable<SObject> {
-
-    public Database.QueryLocator start(
-        Database.BatchableContext bc
-    ) {
-
-        return Database.getQueryLocator([
-            SELECT Id, Status__c
-            FROM Account
-        ]);
-    }
-
-    public void execute(
-        Database.BatchableContext bc,
-        List<Account> scope
-    ) {
-
-        for (Account acc : scope) {
-            acc.Status__c = 'Reviewed';
-        }
-
-        update scope;
-    }
-
-    public void finish(
-        Database.BatchableContext bc
-    ) {
-        // post-processing
-    }
-}
-
-Run:
-
-Database.executeBatch(
-    new AccountBatch(),
-    200
-);
-
-Conceptually:
-
-Huge dataset
-
-      ↓
-
-Batch 1
-200 records
-
-Batch 2
-200 records
-
-Batch 3
-200 records
-
-...
-
-Each execute chunk gets its own transaction context
-
-That last point matters.
-
-Governor limits are applied per batch execution transaction rather than treating the entire million-record workload as one giant transaction.
-
-
----
-
-Scheduled Apex
-
-Example requirement:
-
-> Every night process stale records.
-
-
-
-public class NightlyProcessor
-    implements Schedulable {
-
-    public void execute(
-        SchedulableContext context
-    ) {
-
-        Database.executeBatch(
-            new AccountBatch()
-        );
-    }
-}
-
-A common architecture can therefore be:
-
-Scheduled Apex
-      ↓
-Batch Apex
-      ↓
-Process large dataset
-
-
----
-
-Which async mechanism?
-
-Interview scenario:
-
-“Need to process 1 million records?”
-
-→ Batch Apex.
-
-“Need to perform structured asynchronous processing after a trigger?”
-
-→ Often Queueable.
-
-“Need it every night?”
-
-→ Scheduled Apex, potentially launching Batch/Queueable as appropriate.
-
-“Simple existing async method using primitive parameters?”
-
-→ Future may be encountered, although Queueable is generally preferable for new structured async work.
-
-Don't answer every asynchronous question with Queueable. Choose based on requirement.
-
-
----
-
-Async Apex testing
-
-Queueable:
-
-@IsTest
-private class AccountProcessorTest {
-
-    @IsTest
-    static void testQueueable() {
-
-        Account acc =
-            new Account(Name = 'Test');
-
-        insert acc;
-
-        Set<Id> ids =
-            new Set<Id>{acc.Id};
-
-        Test.startTest();
-
-        System.enqueueJob(
-            new AccountProcessor(ids)
-        );
-
-        Test.stopTest();
-
-        // assertions
-    }
-}
-
-Why Test.stopTest() matters here?
-
-Because asynchronous work queued between startTest() and stopTest() is executed synchronously for the test by stopTest(), allowing you to assert its outcome.
-
-
----
-
-Callout testing
-
-Real HTTP callout should not be made from a unit test.
-
-Use:
-
-HttpCalloutMock
+```
+
+Interview questions:
+1. Is topic ka main use case kya hai?
+2. Is implementation me sabse common production bug kya ho sakta hai?
+3. Bulk transaction me behavior kaise change hoga?
+4. Standard user vs System Admin ke result me difference kyun aa sakta hai?
+5. DEV works but SIT fails — first five checks kya honge?
+6. Is design ko testable aur observable kaise banaoge?
+
+2. Core Java — Java Exceptions + HTTP concepts | ~25 min
+
+Goal:
+- Syntax yaad karna enough nahi; concept explain karna aana chahiye.
+- One happy path + one edge/failure path likho.
+- Collection/concurrency/performance implication ho to explain karo.
 
 Example:
 
-@IsTest
-global class OpportunityMock
-    implements HttpCalloutMock {
-
-    global HTTPResponse respond(
-        HTTPRequest request
-    ) {
-
-        HttpResponse response =
-            new HttpResponse();
-
-        response.setStatusCode(200);
-
-        response.setBody(
-            '{"status":"success"}'
-        );
-
-        return response;
-    }
-}
-
-Test:
-
-Test.setMock(
-    HttpCalloutMock.class,
-    new OpportunityMock()
-);
-
-Then enqueue/run the functionality.
-
-This is very interview-worthy because REST integration + testing often get asked together.
-
-Salesforce interview drill
-
-Be able to answer these aloud:
-
-1. Future vs Queueable?
-
-
-2. When would you choose Batch Apex?
-
-
-3. Why does Batch Apex help with governor limits?
-
-
-4. What are start, execute, and finish?
-
-
-5. What does Database.AllowsCallouts do?
-
-
-6. Why use Named Credentials?
-
-
-7. How do you test HTTP callouts?
-
-
-8. Why use Test.stopTest() when testing Queueable?
-
-
-9. Can Queueable jobs be chained?
-
-
-10. When would Scheduled Apex be appropriate?
-
-
-
-A solid 30-second answer to:
-
-“Future vs Queueable?”
-
-> Both execute work asynchronously, but for new development I generally prefer Queueable because it provides a job ID, supports richer state and allows job chaining. Future methods are simpler and commonly found in legacy implementations, but have more restrictive parameter handling and less control.
-
-
-
-
----
-
-2. Core Java — Exception Handling | ~25 min
-
-Consider:
-
-int result = 10 / 0;
-
-This causes:
-
-ArithmeticException
-
-Handle:
-
-try {
-
-    int result = 10 / 0;
-
-} catch (ArithmeticException e) {
-
-    System.out.println(
-        "Cannot divide by zero"
-    );
-}
-
-finally
-
-try {
-
-    // risky operation
-
-} catch (Exception e) {
-
-    // handle error
-
-} finally {
-
-    // cleanup
-}
-
-finally is typically used for cleanup that should occur whether the operation succeeds or fails, subject to exceptional JVM termination scenarios.
-
-
----
-
-Checked vs unchecked exceptions
-
-Java interview staple.
-
-Checked exception
-
-Compiler requires handling/declaration.
-
-Example:
-
-IOException
-
-Unchecked exception
-
-Subclass of:
-
-RuntimeException
-
-Examples:
-
-NullPointerException
-ArithmeticException
-IllegalArgumentException
-
-
----
-
-throw vs throws
-
-throw actually throws an exception:
-
-if (age < 18) {
-    throw new IllegalArgumentException(
-        "Age must be 18+"
-    );
-}
-
-throws declares that a method may propagate one:
-
-public void readFile()
-    throws IOException {
-
-    // ...
-}
-
-Remember:
-
-throw
-→ actually throw exception
-
-throws
-→ declare possible exception
-
-
----
-
-Custom exception
-
-class InvalidEmployeeException
-    extends Exception {
-
-    public InvalidEmployeeException(
-        String message
-    ) {
-        super(message);
-    }
-}
-
-Use:
-
-if (employee == null) {
-
-    throw new InvalidEmployeeException(
-        "Employee cannot be null"
-    );
-}
-
-Java interview drill
-
-Explain:
-
-checked vs unchecked exception
-
-throw vs throws
-
-try/catch/finally
-
-why swallowing exceptions is dangerous
-
-
-Bad:
-
-try {
-    process();
-} catch (Exception e) {
-}
-
-Why bad?
-
-Because the error disappears with no logging, handling or propagation.
-
-
----
-
-3. Hands-on Mini Project — Salesforce REST Sync | ~25 min
-
-Today's task builds directly on your Salesforce integration experience.
-
-Requirement
-
-When Opportunity transitions:
-
-anything
-   ↓
-Closed Won
-
-send the Opportunity to an external system asynchronously.
-
-Architecture:
-
-Opportunity update
-        ↓
-Trigger
-        ↓
-Handler
-        ↓
-Collect Opportunity IDs
-        ↓
-Queueable
-        ↓
-REST POST
-        ↓
-External System
-
-Create:
-
-OpportunityTrigger.trigger
-
-OpportunityTriggerHandler.cls
-
-OpportunitySyncJob.cls
-
-OpportunitySyncJobTest.cls
-
-OpportunityMock.cls
-
-Rules
-
-Your Trigger must contain no callout.
-
-Handler should detect:
-
-newOpp.StageName == 'Closed Won'
-&&
-oldOpp.StageName != 'Closed Won'
-
-Collect IDs:
-
-Set<Id> opportunityIds
-
-Then:
-
-System.enqueueJob(
-    new OpportunitySyncJob(
-        opportunityIds
-    )
-);
-
-Queueable must implement:
-
-Queueable,
-Database.AllowsCallouts
-
-Payload should contain at least:
-
-Opportunity Id
-Name
-Amount
-StageName
-AccountId
-
-Expected JSON conceptually:
-
-{
-  "id": "006...",
-  "name": "Enterprise Deal",
-  "amount": 250000,
-  "stage": "Closed Won",
-  "accountId": "001..."
-}
-
-Test requirements
-
-Create an Account + Opportunity.
-
-Initially:
-
-Stage = Prospecting
-
-Then inside:
-
-Test.startTest();
-
-change:
-
-Prospecting
-↓
-Closed Won
-
-Register:
-
-Test.setMock(
-    HttpCalloutMock.class,
-    new OpportunityMock()
-);
-
-Then:
-
-Test.stopTest();
-
-Bonus: modify the mock so you can verify that the request uses:
-
-POST
-
-and contains the expected Opportunity information.
-
-That's a realistic interview project you can eventually put on GitHub.
-
-
----
-
-4. Git/GitHub + Harness — Rebase & Deployment | ~10 min
-
-Yesterday: merge conflict.
-
-Today: rebase.
-
-Imagine:
-
-main
-
-A──B──C
-
-feature
-
-A──B──D──E
-
-Meanwhile main gets C.
-
-You run:
-
-git checkout feature/SF-1023
-git fetch origin
-git rebase origin/main
-
-Git conceptually rewrites your feature commits on top of latest main:
-
-A──B──C──D'──E'
-
-Important:
-
-Rebase rewrites commit history.
-
-Therefore be careful rebasing branches other developers are already using.
-
-Interview question:
-
-Merge vs rebase?
-
-Good answer:
-
-> Merge combines histories and creates a merge commit when necessary, preserving branch history. Rebase reapplies commits on top of another base and can create a cleaner linear history, but because it rewrites commit history I avoid casually rebasing shared branches.
-
-
-
-Where Harness fits
-
-A simplified Salesforce delivery flow:
-
-Developer
-   ↓
-Feature branch
-   ↓
-Pull Request
-   ↓
-Code review
-   ↓
-Pipeline
-   ↓
-Salesforce validation
-   ↓
-Apex tests
-   ↓
-Approval
-   ↓
-Deploy
-   ↓
-QA / SIT / Production
-
-Harness can sit in that pipeline/orchestration layer.
-
-For interviews, prepare to explain your experience as:
-
-> I worked with Git-based Salesforce delivery where changes moved through branches and pull requests, and CI/CD pipelines handled validation/deployment across environments. I also worked with Harness in the deployment workflow and troubleshot environment-specific issues when behaviour differed between orgs.
-
-
-
-That's much stronger than:
-
-> “I know Harness.”
-
-
-
-Your recent Dev/COMQA/SIT debugging experience gives you useful real examples for this topic.
-
-
----
+```java
+// Write one normal case and one edge/failure case.
+// Be ready to explain why the implementation is correct.
+```
+
+Java interview drill:
+1. Is concept ka practical use?
+2. Null/exception behavior?
+3. Time/space or concurrency implication?
+4. Iska Apex/Salesforce world me koi similar mental model?
+
+3. Hands-on Project — Opportunity REST Sync | ~25 min
+
+Acceptance criteria:
+[ ] Smallest working version
+[ ] Input validation
+[ ] Positive scenario
+[ ] Negative/empty scenario
+[ ] Bulk/security behavior considered
+[ ] Useful error/debug output
+[ ] Unit test or clear verification step
+
+Expected output:
+A working, interview-explainable implementation of **Opportunity REST Sync** that follows today's Salesforce concepts.
+
+4. Git + Harness/CI-CD — CI validation basics | ~10 min
+
+Practice flow:
+
+feature branch  
+→ implementation  
+→ local/unit tests  
+→ commit  
+→ pull request  
+→ validation  
+→ review/approval  
+→ deploy  
+→ post-deploy verification
+
+Suggested commands:
+
+```bash
+git switch -c training/day-3
+git add .
+git commit -m "Complete Day 3 training"
+git push -u origin training/day-3
+```
+
+Deployment/debugging note:
+A successful deployment does not prove the feature works for every user. Validate metadata dependencies, permissions, configuration, and the actual end-user path after deployment.
 
 5. Day 3 Quiz | ~5 min
 
-Answer without scrolling up.
+Q1. Today's Salesforce topic ko 60 seconds me explain karo.  
+Q2. One bulkification/security risk identify karo.  
+Q3. One negative test scenario batao.  
+Q4. DEV vs SIT mismatch ho to pehla evidence kya collect karoge?  
+Q5. Today's Java concept ka one real coding use case?  
+Q6. Hands-on project me observable success ka proof kya hoga?  
+Q7. CI/CD pipeline kis failure par promotion stop karegi?  
+Q8. Is topic se related one interviewer follow-up question khud banao.
 
-1. You need to process 3 million Salesforce records. Which async mechanism is the strongest candidate?
+Today's completion target
 
-2. Why might Queueable be preferable to Future?
+By the end of Day 3, you should be able to explain **Async Apex & REST Integration**, demonstrate **Java Exceptions + HTTP concepts**, complete **Opportunity REST Sync**, and describe the deployment/debugging workflow confidently.
 
-3. What interface enables a Queueable to make HTTP callouts?
-
-4. Why shouldn't API credentials be hardcoded in Apex?
-
-5. How do you test an Apex HTTP callout?
-
-6. What happens to Queueable work at Test.stopTest() in a unit test?
-
-7. Java: Difference between throw and throws?
-
-8. Java: Is NullPointerException checked or unchecked?
-
-9. Git: What major risk comes with rebase?
-
-10. Architecture challenge: Explain this flow in your own words:
-
-Opportunity Trigger
-        ↓
-Handler
-        ↓
-Queueable
-        ↓
-REST API
-
-Today's finish line
-
-By the end of Day 3 you should be comfortable explaining:
-
-Future vs Queueable vs Batch vs Scheduled Apex → async testing → REST callout mocks → Java exception handling → Git merge vs rebase → Harness/CI-CD pipeline flow.
-
-Most important practical work today is the Opportunity REST Sync project. Don't copy the finished implementation from somewhere; build the five files yourself from the architecture above. That's exactly the kind of small project that turns “I know integrations” into something you can actually defend in an interview.
+Revision note:
+Session complete karne ke baad 5-line summary apne words me likho + one interview question mark karo jiska answer abhi weak lag raha hai.

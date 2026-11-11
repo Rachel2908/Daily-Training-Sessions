@@ -1,866 +1,123 @@
 Day 4 — Salesforce Job-Switch Training 🚀
 
-Rachel, first 3 days me humne Triggers → bulkification → Collections/SOQL → testing → Async Apex → REST callouts build kiya. Aaj hum frontend side pe properly enter karenge: LWC architecture, lifecycle, reactive data, @wire vs imperative Apex, parent-child communication, then Java interfaces/abstract classes, a practical LWC project, and finally Salesforce deployment + Harness validation strategy.
+Date: 6 October 2026
 
-Today's ~2 hours: Salesforce/LWC 55 min → Core Java 25 min → hands-on 25 min → Git/Harness 10 min → quiz 5 min.
+Rachel, aaj ka session progressive roadmap ka next step hai. Focus sirf theory nahi — interview explanation + practical implementation + debugging mindset.
 
-1. Salesforce — Lightning Web Components | ~55 min
+Total: ~2 hours  
+Salesforce 55 min → Core Java 25 min → Practical 25 min → Git/Harness 10 min → Quiz 5 min
 
-An LWC usually has three core files:
+1. Salesforce — LWC Architecture, Lifecycle & Communication | ~55 min
 
-accountSearch/
-│
-├── accountSearch.html
-├── accountSearch.js
-└── accountSearch.js-meta.xml
+Aaj ke core points:
+- @api / @wire / imperative Apex
+- Lifecycle hooks
+- Parent-child events and LMS
 
-Often you'll also have:
+Interview mindset:
+- Requirement ko pehle business rule me convert karo.
+- Salesforce governor limits, sharing/security, bulk behavior aur transaction context ko consciously check karo.
+- Agar DEV/COMQA me kaam kare but SIT/UAT me issue aaye, code ke saath metadata/configuration/data differences bhi compare karo.
+- Admin user ke successful result ko end-user behavior ka proof mat mano.
 
-accountSearch.css
+Concrete practice sample:
 
-Think of them as:
-
-HTML → UI
-JS   → behaviour/state
-XML  → where Salesforce can expose the component
-CSS  → component styling
-
-A simple component:
-
-<template>
-    <lightning-card title="Welcome">
-        <div class="slds-p-around_medium">
-            Hello {userName}
-        </div>
-    </lightning-card>
-</template>
-
-import { LightningElement } from 'lwc';
-
-export default class WelcomeComponent extends LightningElement {
-    userName = 'Rachel';
-}
-
-When userName changes, LWC's reactive rendering updates the relevant UI.
-
-LWC lifecycle
-
-Know these hooks:
-
-constructor()
-      ↓
-connectedCallback()
-      ↓
-render()
-      ↓
-renderedCallback()
-
-component removed
-      ↓
-disconnectedCallback()
-
-constructor() is for initial component setup. Don't try accessing rendered DOM elements here because the template hasn't been inserted yet.
-
-connectedCallback() runs when the component is inserted into the DOM. Useful for initialization that depends on the component being connected.
-
-connectedCallback() {
-    console.log('Component connected');
-}
-
-renderedCallback() executes after rendering and may execute multiple times.
-
-This is a classic interview trap:
-
-renderedCallback() {
-    this.someReactiveProperty++;
-}
-
-Reactive state change → rerender → renderedCallback() → state change → rerender...
-
-You can accidentally create a loop.
-
-disconnectedCallback() is useful for cleanup such as event subscriptions/listeners.
-
-@api
-
-Used to expose a public property or method to a parent component.
-
-Child:
-
-import {
-    LightningElement,
-    api
-} from 'lwc';
-
-export default class AccountDetails
-    extends LightningElement {
-
-    @api recordId;
-}
-
-Parent:
-
-<c-account-details
-    record-id={selectedAccountId}>
-</c-account-details>
-
-Mental model:
-
-Parent
-   │
-   │ @api property
-   ↓
-Child
-
-@wire
-
-Suppose Apex:
-
-public with sharing class AccountController {
-
-    @AuraEnabled(cacheable=true)
-    public static List<Account> getAccounts() {
-
-        return [
-            SELECT Id, Name, Industry
-            FROM Account
-            LIMIT 20
-        ];
-    }
-}
-
-LWC:
-
-import { LightningElement, wire }
-    from 'lwc';
-
-import getAccounts
-    from '@salesforce/apex/AccountController.getAccounts';
-
-export default class AccountList
-    extends LightningElement {
-
-    @wire(getAccounts)
-    accounts;
-}
-
-You can access:
-
-accounts.data
-accounts.error
-
-Another common form:
-
-@wire(getAccounts)
-wiredAccounts({ data, error }) {
-
-    if (data) {
-        this.accounts = data;
-        this.error = undefined;
-    }
-
-    if (error) {
-        this.error = error;
-        this.accounts = undefined;
-    }
-}
-
-Reactive wire parameters
-
-Apex:
-
-@AuraEnabled(cacheable=true)
-public static List<Account> getAccounts(
-    String industry
-) {
-
-    return [
-        SELECT Id, Name, Industry
-        FROM Account
-        WHERE Industry = :industry
-    ];
-}
-
-JS:
-
-industry = 'Banking';
-
-@wire(getAccounts, {
-    industry: '$industry'
-})
-accounts;
-
-The $ is important.
-
-industry: '$industry'
-
-means the parameter is reactive.
-
-When industry changes, the wire can provision new data.
-
-@wire vs imperative Apex
-
-Imperative:
-
+```js
 async handleSearch() {
-
+    const requestId = ++this.latestRequestId;
     try {
-
-        const result =
-            await getAccounts({
-                industry: this.industry
-            });
-
-        this.accounts = result;
-
+        const result = await searchRecords({ searchKey: this.searchKey });
+        if (requestId === this.latestRequestId) {
+            this.records = result;
+        }
     } catch (error) {
-
-        this.error = error;
-
+        this.errorMessage = error.body?.message || 'Request failed';
     }
 }
+```
 
-A useful interview distinction:
+Interview questions:
+1. Is topic ka main use case kya hai?
+2. Is implementation me sabse common production bug kya ho sakta hai?
+3. Bulk transaction me behavior kaise change hoga?
+4. Standard user vs System Admin ke result me difference kyun aa sakta hai?
+5. DEV works but SIT fails — first five checks kya honge?
+6. Is design ko testable aur observable kaise banaoge?
 
-Wire fits reactive/declarative data provisioning, especially read scenarios.
+2. Core Java — Interfaces vs Abstract Classes | ~25 min
 
-Imperative gives you explicit control over when Apex executes and is commonly used for button-driven actions, DML methods, or procedural flows.
-
-Don't say:
-
-> @wire = GET and imperative = POST.
-
-
-
-That's not the right abstraction.
-
-Why cacheable=true?
-
-@AuraEnabled(cacheable=true)
-
-tells the framework the Apex method is read-only/cacheable.
-
-Therefore this is wrong:
-
-@AuraEnabled(cacheable=true)
-public static void updateAccount(Account acc) {
-    update acc;
-}
-
-A cacheable Apex method shouldn't perform data mutation.
-
-LWC → Apex → Database
-
-Architecture:
-
-LWC
- │
- │ @wire / imperative
- ↓
-Apex Controller
- │
- │ SOQL / DML
- ↓
-Salesforce Database
-
-But there's an important security problem.
-
-Consider:
-
-public class AccountController {
-
-    @AuraEnabled
-    public static List<Account> getAccounts() {
-
-        return [
-            SELECT Id,
-                   Name,
-                   AnnualRevenue
-            FROM Account
-        ];
-    }
-}
-
-Apex doesn't automatically guarantee every aspect of object/field access just because the user called it from an LWC.
-
-We'll do a full security session later, but start building the habit of thinking about:
-
-Sharing
-CRUD
-FLS
-
-For example:
-
-public with sharing class AccountController {
-
-with sharing helps enforce record-level sharing rules.
-
-But remember:
-
-> with sharing does not by itself enforce CRUD/FLS.
-
-
-
-That's a favourite interview question.
-
-Parent → Child communication
-
-Parent:
-
-<c-account-details
-    account-id={selectedAccountId}>
-</c-account-details>
-
-Child:
-
-@api accountId;
-
-Simple.
-
-But what about:
-
-Child → Parent
-
-Use a custom event.
-
-Child:
-
-handleSelect() {
-
-    const event =
-        new CustomEvent(
-            'accountselect',
-            {
-                detail: {
-                    accountId: this.recordId
-                }
-            }
-        );
-
-    this.dispatchEvent(event);
-}
-
-Parent:
-
-<c-account-row
-    onaccountselect={handleAccountSelect}>
-</c-account-row>
-
-JS:
-
-handleAccountSelect(event) {
-
-    this.selectedAccountId =
-        event.detail.accountId;
-}
-
-Remember:
-
-Parent → Child
-@api
-
-Child → Parent
-CustomEvent
-
-Lightning Message Service
-
-Now suppose components aren't in a simple parent-child hierarchy.
+Goal:
+- Syntax yaad karna enough nahi; concept explain karna aana chahiye.
+- One happy path + one edge/failure path likho.
+- Collection/concurrency/performance implication ho to explain karo.
 
 Example:
 
-Component A
-
-      unrelated
-
-Component B
-
-For cross-DOM/component communication, Lightning Message Service (LMS) is a standard option.
-
-Architecture:
-
-Component A
-    ↓
-Message Channel
-    ↓
-Component B
-
-Interviewers may ask:
-
-> How would two unrelated LWCs communicate?
-
-
-
-A good answer:
-
-> If they don't have a direct parent-child relationship, I'd consider Lightning Message Service using a Lightning Message Channel. For direct parent-child communication I'd prefer public APIs and custom events instead of introducing LMS unnecessarily.
-
-
-
-That's a much better answer than “use pub-sub everywhere.”
-
-LWC interview drill
-
-Be ready to answer:
-
-1. What is LWC?
-
-
-2. @api vs @wire?
-
-
-3. Wire vs imperative Apex?
-
-
-4. Why use $property in wire parameters?
-
-
-5. What does cacheable=true mean?
-
-
-6. Can a cacheable Apex method perform DML?
-
-
-7. Parent → child communication?
-
-
-8. Child → parent communication?
-
-
-9. How do unrelated LWCs communicate?
-
-
-10. connectedCallback() vs renderedCallback()?
-
-
-11. Why can renderedCallback() cause an infinite loop?
-
-
-12. Does with sharing enforce FLS?
-
-
-
-For:
-
-> When would you use imperative Apex instead of @wire?
-
-
-
-A good interview answer is:
-
-> I use imperative Apex when execution should happen explicitly, such as after a button click, when performing data mutations, or when I need procedural control over request handling. I use wire when the data requirement is reactive and fits the wire service's declarative model.
-
-
-
-2. Core Java — Interface vs Abstract Class | ~25 min
-
-You've already covered basic OOP. Now let's make it interview-ready.
-
-Interface:
-
-interface PaymentProcessor {
-
-    void processPayment(double amount);
-}
-
-Implementation:
-
-class CreditCardProcessor
-        implements PaymentProcessor {
-
-    @Override
-    public void processPayment(
-        double amount
-    ) {
-
-        System.out.println(
-            "Card payment: " + amount
-        );
-    }
-}
-
-Another:
-
-class UpiProcessor
-        implements PaymentProcessor {
-
-    @Override
-    public void processPayment(
-        double amount
-    ) {
-
-        System.out.println(
-            "UPI payment: " + amount
-        );
-    }
-}
-
-Now:
-
-PaymentProcessor processor =
-    new UpiProcessor();
-
-processor.processPayment(1000);
-
-The calling code depends on the contract, not a concrete implementation.
-
-That's abstraction and polymorphism working together.
-
-Abstract class
-
-abstract class Employee {
-
-    protected String name;
-
-    Employee(String name) {
-        this.name = name;
-    }
-
-    abstract void work();
-
-    void login() {
-        System.out.println(
-            name + " logged in"
-        );
-    }
-}
-
-Child:
-
-class Developer extends Employee {
-
-    Developer(String name) {
-        super(name);
-    }
-
-    @Override
-    void work() {
-        System.out.println(
-            "Writing code"
-        );
-    }
-}
-
-The abstract class can hold state, constructors and concrete implementation.
-
-Interview comparison
-
-Think:
-
-Interface
-→ contract/capability
-
-Abstract class
-→ shared base abstraction + state/behaviour
-
-Modern Java interfaces can also have default and static methods, so avoid outdated answers like:
-
-> “Interfaces can never contain implemented methods.”
-
-
-
-Multiple interfaces
-
-Java doesn't allow a class to extend multiple classes:
-
-class C extends A, B
-
-❌
-
-But:
-
-class PaymentService
-    implements
-        PaymentProcessor,
-        Auditable {
-}
-
-is valid.
-
-This gives Java a way to compose multiple behavioural contracts without multiple class inheritance.
-
-Salesforce connection
-
-You've actually already seen the same idea.
-
-Apex:
-
-public class OpportunitySyncJob
-    implements Queueable,
-               Database.AllowsCallouts {
-
-You're effectively saying:
-
-This class fulfils the Queueable contract
-
-AND
-
-has the AllowsCallouts capability
-
-That connection is useful in interviews because it shows you understand the concept rather than memorising syntax.
+```java
+// Write one normal case and one edge/failure case.
+// Be ready to explain why the implementation is correct.
+```
+
+Java interview drill:
+1. Is concept ka practical use?
+2. Null/exception behavior?
+3. Time/space or concurrency implication?
+4. Iska Apex/Salesforce world me koi similar mental model?
 
 3. Hands-on Project — Account Explorer LWC | ~25 min
 
-Today we're making something visual instead of another trigger.
-
-Requirement
-
-Build:
-
-Account Explorer
-
-User chooses an Industry:
-
-Banking
-Technology
-Healthcare
-
-Then component displays matching Accounts.
-
-Architecture:
-
-Industry combobox
-       ↓
-LWC
-       ↓
-Apex
-       ↓
-SOQL
-       ↓
-Account results
-       ↓
-lightning-datatable
-
-Apex
-
-Create:
-
-AccountExplorerController.cls
-
-Method:
-
-@AuraEnabled(cacheable=true)
-public static List<Account>
-    getAccountsByIndustry(String industry)
-
-Return:
-
-Id
-Name
-Industry
-Phone
-AnnualRevenue
-
-Rules:
-
-No dynamic SOQL needed
-No DML
-with sharing
-LIMIT records reasonably
-
-LWC
-
-Create:
-
-accountExplorer/
-├── accountExplorer.html
-├── accountExplorer.js
-└── accountExplorer.js-meta.xml
-
-Use:
-
-<lightning-combobox>
-
-and:
-
-<lightning-datatable>
-
-JS state:
-
-selectedIndustry;
-accounts = [];
-error;
-
-Use reactive wire:
-
-@wire(getAccountsByIndustry, {
-    industry: '$selectedIndustry'
-})
-
-Expected UX:
-
-Industry
-[ Technology ▼ ]
-
---------------------------------
-Account          Phone
---------------------------------
-Acme Tech        123456
-Cloud Systems    987654
---------------------------------
-
-Level-2 challenge
-
-Click an Account row.
-
-Create:
-
-accountDetails
-
-Parent:
-
-accountExplorer
-
-Child:
-
-accountDetails
-
-Pass:
-
-@api recordId;
-
-Architecture becomes:
-
-AccountExplorer
-      │
-      │ selectedAccountId
-      ↓
-AccountDetails
-
-Level-3 challenge
-
-Add:
-
-Refresh
-
-After some data changes, refresh wired results using:
-
-refreshApex()
-
-This one project lets you discuss:
-
-LWC + Apex + SOQL + wire + reactivity + datatable + parent-child communication + error handling.
-
-That's a much stronger GitHub mini-project than a component that just displays "Hello World".
-
-4. Git + Harness/CI-CD — Salesforce Validation | ~10 min
-
-Imagine your PR contains:
-
-AccountExplorerController.cls
-AccountExplorerControllerTest.cls
-accountExplorer LWC
-
-A Salesforce CI pipeline shouldn't blindly push everything into production.
-
-A simplified flow is:
-
-Feature Branch
-      ↓
-Pull Request
-      ↓
-Static / quality checks
-      ↓
-Salesforce validation deployment
-      ↓
-Apex tests
-      ↓
-Code review / approvals
-      ↓
-Merge
-      ↓
-Deployment
-
-A useful Salesforce CLI concept is a validation-only deployment.
-
-The goal is essentially:
-
-"Can this metadata deploy successfully
-and do the required tests pass?"
-
-without immediately committing the deployment.
-
-Then production deployment happens after approval according to the team's process.
-
-Harness can orchestrate stages around validation, approvals and deployment.
-
-Deployment failure scenario
-
-Suppose COMQA works, but SIT pipeline fails.
-
-Don't immediately assume:
-
-"My Apex is wrong."
-
-Check:
-
-Apex tests
-Metadata dependencies
-Custom metadata
-Custom settings
-Record types
-Picklist configuration
-Permission sets
-Named Credentials
-API versions
-Environment-specific configuration
-
-You've already hit a real example where a dependent picklist behaved correctly in COMQA but differently in SIT even though the frontend code looked right. That's exactly the kind of production-style debugging story you can eventually turn into a strong interview answer: verify the data/configuration layer before changing working application code.
-
-A strong interview framework is:
-
-Reproduce
-   ↓
-Compare environments
-   ↓
-Check logs
-   ↓
-Check metadata/config
-   ↓
-Identify difference
-   ↓
-Fix
-   ↓
-Regression test
-
-Day 4 Quiz | ~5 min
-
-Don't scroll up. 😄
-
-Q1. Parent LWC needs to send recordId to child. What decorator would you use in the child?
-
-Q2. Child needs to tell parent that an Account was selected. What mechanism?
-
-Q3. Two unrelated LWCs need to communicate. What Salesforce feature would you consider?
-
-Q4. What's wrong here?
-
-@AuraEnabled(cacheable=true)
-public static void saveAccount(Account a) {
-    update a;
-}
-
-Q5. Why is this reactive?
-
-industry: '$selectedIndustry'
-
-Q6. connectedCallback() vs renderedCallback()?
-
-Q7. Does this alone enforce field-level security?
-
-public with sharing class AccountController
-
-Q8. Java: Interface vs abstract class—give one situation where you'd choose each.
-
-Q9. Why might you perform a Salesforce validation deployment before a production deployment?
-
-Q10 — interview challenge: Give a 45-second answer to:
-
-> “How does an LWC retrieve Salesforce data through Apex, and how would you decide between @wire and imperative Apex?”
-
-
+Acceptance criteria:
+[ ] Smallest working version
+[ ] Input validation
+[ ] Positive scenario
+[ ] Negative/empty scenario
+[ ] Bulk/security behavior considered
+[ ] Useful error/debug output
+[ ] Unit test or clear verification step
+
+Expected output:
+A working, interview-explainable implementation of **Account Explorer LWC** that follows today's Salesforce concepts.
+
+4. Git + Harness/CI-CD — Salesforce validation + Harness | ~10 min
+
+Practice flow:
+
+feature branch  
+→ implementation  
+→ local/unit tests  
+→ commit  
+→ pull request  
+→ validation  
+→ review/approval  
+→ deploy  
+→ post-deploy verification
+
+Suggested commands:
+
+```bash
+git switch -c training/day-4
+git add .
+git commit -m "Complete Day 4 training"
+git push -u origin training/day-4
+```
+
+Deployment/debugging note:
+A successful deployment does not prove the feature works for every user. Validate metadata dependencies, permissions, configuration, and the actual end-user path after deployment.
+
+5. Day 4 Quiz | ~5 min
+
+Q1. Today's Salesforce topic ko 60 seconds me explain karo.  
+Q2. One bulkification/security risk identify karo.  
+Q3. One negative test scenario batao.  
+Q4. DEV vs SIT mismatch ho to pehla evidence kya collect karoge?  
+Q5. Today's Java concept ka one real coding use case?  
+Q6. Hands-on project me observable success ka proof kya hoga?  
+Q7. CI/CD pipeline kis failure par promotion stop karegi?  
+Q8. Is topic se related one interviewer follow-up question khud banao.
 
 Today's completion target
 
-By tonight you should be able to explain LWC lifecycle → @api → @wire → imperative Apex → component communication → LMS, compare Java interfaces and abstract classes, and build the first version of Account Explorer.
+By the end of Day 4, you should be able to explain **LWC Architecture, Lifecycle & Communication**, demonstrate **Interfaces vs Abstract Classes**, complete **Account Explorer LWC**, and describe the deployment/debugging workflow confidently.
 
-Tomorrow's progression should move into one of the most important MNC interview areas: Salesforce Security — profiles, permission sets, OWD, roles, sharing rules, CRUD/FLS, with sharing, user-mode operations and secure Apex/LWC design.
+Revision note:
+Session complete karne ke baad 5-line summary apne words me likho + one interview question mark karo jiska answer abhi weak lag raha hai.
